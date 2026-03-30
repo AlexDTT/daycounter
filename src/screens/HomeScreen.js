@@ -572,7 +572,9 @@ export default function HomeScreen() {
                             try {
                               await disableHabitReminder(counterId);
                               const loaded = await loadCounters();
-                              const next = loaded.filter((c) => c.id !== counterId);
+                              const next = loaded.filter(
+                                (c) => c.id !== counterId,
+                              );
                               setCounters(next);
                               await saveCounters(next);
                             } catch (err) {
