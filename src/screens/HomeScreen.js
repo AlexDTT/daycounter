@@ -8,6 +8,7 @@ import {
   SafeAreaView,
   Text,
   TextInput,
+  Vibration,
   View,
 } from "react-native";
 import { useIsFocused, useNavigation } from "@react-navigation/native";
@@ -170,6 +171,8 @@ export default function HomeScreen() {
     setCounters(next);
     await saveCounters(next);
 
+    Vibration.vibrate(10);
+
     const delta = (after.streak || 0) - (before.streak || 0);
     const status = getStreakStatus(after);
     showToast({
@@ -188,48 +191,88 @@ export default function HomeScreen() {
     const goalPct = item.goal ? Math.min(1, (item.streak || 0) / item.goal) : 0;
     const status = getStreakStatus(item);
 
-    const pill =
-      status.variant === "safe"
-        ? "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-        : status.variant === "risk"
-          ? "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200"
-          : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
+    const statusPill =
+      status.variant === "risk"
+        ? "bg-orange-100 text-orange-800 dark:bg-orange-950/40 dark:text-orange-200"
+        : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
 
     return (
       <Pressable
         onPress={() => navigation.navigate("Detail", { id: item.id })}
         onLongPress={() => openActions(item)}
-        className="mb-3 rounded-3xl bg-white/90 p-4 shadow-sm dark:bg-slate-900"
+        className="mb-3 rounded-3xl bg-white/90 px-4 py-4 dark:bg-slate-900"
       >
-        <View className="flex-row items-start justify-between">
-          <View className="flex-1 flex-row pr-3">
-            <View className="mr-3 items-start">
-              <Text className="text-2xl font-bold text-orange-500">
-                🔥 {item.streak}
-              </Text>
-              <Text className="mt-0.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                streak
+        <View className="flex-row items-center">
+          <Pressable
+            onPress={(e) => {
+              stopPress(e);
+              markToday(item);
+            }}
+            disabled={done}
+            hitSlop={8}
+            className={`h-11 w-11 items-center justify-center rounded-2xl ${
+              done
+                ? "bg-slate-100 dark:bg-slate-800"
+                : "bg-slate-900 dark:bg-slate-100"
+            }`}
+          >
+            <Text
+              className={`text-lg font-bold ${
+                done
+                  ? "text-slate-400 dark:text-slate-500"
+                  : "text-white dark:text-slate-900"
+              }`}
+            >
+              {done ? "✓" : "○"}
+            </Text>
+          </Pressable>
+
+          <View className="flex-1 pl-4 pr-2">
+            <Text
+              numberOfLines={1}
+              className="text-base font-semibold text-slate-900 dark:text-slate-100"
+            >
+              {item.title}
+            </Text>
+            <View className="mt-1 flex-row items-center">
+              <View className={`rounded-full px-2.5 py-1 ${statusPill}`}>
+                <Text className="text-[11px] font-semibold">
+                  {status.variant === "risk" ? "⚠︎ " : ""}
+                  {status.title}
+                </Text>
+              </View>
+              <Text className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                🔥 {item.streak} combo • best {item.longestStreak}
               </Text>
             </View>
+            <Text
+              className={`mt-2 text-xs ${
+                done
+                  ? "text-slate-500 dark:text-slate-400"
+                  : "font-medium text-slate-700 dark:text-slate-200"
+              }`}
+            >
+              {status.subtitle}
+            </Text>
 
-            <View className="flex-1">
-              <Text
-                numberOfLines={1}
-                className="text-base font-semibold text-slate-900 dark:text-slate-100"
-              >
-                {item.title}
-              </Text>
-              <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                Started {formatDateShort(item.createdAt)}
-              </Text>
-              <View className="mt-2 self-start rounded-full px-3 py-1">
-                <View className={`rounded-full px-3 py-1 ${pill}`}>
-                  <Text className="text-[11px] font-semibold">
-                    {status.variant === "risk" ? "⚠︎" : ""} {status.title}
+            {item.goal ? (
+              <View className="mt-3">
+                <View className="flex-row items-center justify-between">
+                  <Text className="text-xs text-slate-500 dark:text-slate-400">
+                    Goal {item.goal} days
+                  </Text>
+                  <Text className="text-xs text-slate-500 dark:text-slate-400">
+                    {Math.round(goalPct * 100)}%
                   </Text>
                 </View>
+                <View className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+                  <View
+                    className="h-2 rounded-full bg-orange-500"
+                    style={{ width: `${Math.round(goalPct * 100)}%` }}
+                  />
+                </View>
               </View>
-            </View>
+            ) : null}
           </View>
 
           <Pressable
@@ -238,7 +281,7 @@ export default function HomeScreen() {
               openActions(item);
             }}
             hitSlop={10}
-            className="h-9 w-9 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800"
+            className="h-10 w-10 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800"
           >
             <Text className="text-lg text-slate-700 dark:text-slate-200">
               ⋯
@@ -246,63 +289,9 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
-        <View className="mt-4 flex-row items-center justify-between">
-          <Text className="text-xs text-slate-500 dark:text-slate-400">
-            best {item.longestStreak}
-          </Text>
-          <Text className="text-xs text-slate-500 dark:text-slate-400">
-            {item.totalDays} total
-          </Text>
-        </View>
-
-        {!done ? (
-          <Text className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">
-            {status.subtitle}
-          </Text>
-        ) : (
-          <Text className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            {status.subtitle}
-          </Text>
-        )}
-
-        {item.goal ? (
-          <View className="mt-3">
-            <View className="flex-row items-center justify-between">
-              <Text className="text-xs text-slate-500 dark:text-slate-400">
-                Goal {item.goal} days
-              </Text>
-              <Text className="text-xs text-slate-500 dark:text-slate-400">
-                {Math.round(goalPct * 100)}%
-              </Text>
-            </View>
-            <View className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-              <View
-                className="h-2 rounded-full bg-orange-500"
-                style={{ width: `${Math.round(goalPct * 100)}%` }}
-              />
-            </View>
-          </View>
-        ) : null}
-
-        <Pressable
-          onPress={() => markToday(item)}
-          disabled={done}
-          className={`mt-4 items-center justify-center rounded-2xl px-4 py-3 ${
-            done
-              ? "bg-slate-100 dark:bg-slate-800"
-              : "bg-slate-900 dark:bg-slate-100"
-          }`}
-        >
-          <Text
-            className={`text-sm font-semibold ${
-              done
-                ? "text-slate-500 dark:text-slate-400"
-                : "text-white dark:text-slate-900"
-            }`}
-          >
-            {done ? "Done for today ✓" : "Mark today complete"}
-          </Text>
-        </Pressable>
+        <Text className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+          Started {formatDateShort(item.createdAt)}
+        </Text>
       </Pressable>
     );
   };
@@ -342,10 +331,10 @@ export default function HomeScreen() {
         <View className="flex-row items-center justify-between">
           <View>
             <Text className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Today
+              Dailies
             </Text>
             <Text className="mt-1 text-2xl font-bold text-slate-900 dark:text-slate-100">
-              DayCounter
+              Your habits
             </Text>
           </View>
 
@@ -400,17 +389,17 @@ export default function HomeScreen() {
         {filteredCounters.length === 0 ? (
           <View className="mt-6 rounded-3xl bg-white/90 p-5 dark:bg-slate-900">
             <Text className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Create your first counter
+              Add your first habit
             </Text>
             <Text className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-              Try “Gym streak”, “Days without sugar”, or “No vaping”.
+              Try “Gym”, “No sugar”, or “Read 10 pages”.
             </Text>
             <Pressable
               onPress={openCreate}
               className="mt-4 items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 dark:bg-slate-100"
             >
               <Text className="text-sm font-semibold text-white dark:text-slate-900">
-                Add a counter
+                Add a habit
               </Text>
             </Pressable>
           </View>

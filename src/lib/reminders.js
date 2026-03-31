@@ -31,10 +31,15 @@ async function ensurePermissions() {
   if (Platform.OS === "web") return { granted: false, reason: "web" };
 
   const existing = await Notifications.getPermissionsAsync();
-  if (existing.granted) return { granted: true };
+  if (existing.granted || existing.status === "granted")
+    return { granted: true };
 
   const requested = await Notifications.requestPermissionsAsync();
-  return { granted: requested.granted };
+  const granted = requested.granted || requested.status === "granted";
+  return {
+    granted,
+    reason: granted ? undefined : requested.status || "permission",
+  };
 }
 
 export async function enableDailyReminder({ hour = 20, minute = 0 } = {}) {
@@ -62,13 +67,25 @@ export async function enableDailyReminder({ hour = 20, minute = 0 } = {}) {
     }
   }
 
-  const id = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Don’t break your streak",
-      body: "Quick check-in: mark today complete.",
-    },
-    trigger: { hour, minute, repeats: true },
-  });
+  let id;
+  try {
+    id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Don’t break your streak",
+        body: "Quick check-in: mark today complete.",
+      },
+      trigger: {
+        hour,
+        minute,
+        repeats: true,
+        ...(Platform.OS === "android" ? { channelId: "default" } : null),
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    await AsyncStorage.setItem(STORAGE_ENABLED, "false");
+    return { ok: false, reason: "schedule" };
+  }
 
   await Promise.all([
     AsyncStorage.setItem(STORAGE_ENABLED, "true"),
@@ -134,13 +151,24 @@ export async function enableHabitReminder(
     }
   }
 
-  const id = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: "Don’t break your streak",
-      body: `Quick check-in: mark “${title}” complete.`,
-    },
-    trigger: { hour, minute, repeats: true },
-  });
+  let id;
+  try {
+    id = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Don’t break your streak",
+        body: `Quick check-in: mark “${title}” complete.`,
+      },
+      trigger: {
+        hour,
+        minute,
+        repeats: true,
+        ...(Platform.OS === "android" ? { channelId: "default" } : null),
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    return { ok: false, reason: "schedule" };
+  }
 
   await AsyncStorage.setItem(key, id);
   return { ok: true, notificationId: id };

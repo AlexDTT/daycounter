@@ -7,10 +7,12 @@ import {
   Pressable,
   SafeAreaView,
   ScrollView,
+  Switch,
   Text,
-  TextInput,
+  Vibration,
   View,
 } from "react-native";
+import Slider from "@react-native-community/slider";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import {
   canMarkToday,
@@ -73,12 +75,87 @@ export default function DetailScreen() {
   const [allCounters, setAllCounters] = useState([]);
   const [toast, setToast] = useState(null);
   const toastAnim = React.useRef(new Animated.Value(0)).current;
+  const flameAnim = React.useRef(new Animated.Value(0)).current;
+  const comboScale = React.useRef(new Animated.Value(1)).current;
   const [monthCursor, setMonthCursor] = useState(startOfMonth(new Date()));
   const [reminderTimeOpen, setReminderTimeOpen] = useState(false);
-  const [reminderHourDraft, setReminderHourDraft] = useState("20");
-  const [reminderMinuteDraft, setReminderMinuteDraft] = useState("00");
+  const [reminderHourDraft, setReminderHourDraft] = useState(20);
+  const [reminderMinuteDraft, setReminderMinuteDraft] = useState(0);
+  const [reminderBusy, setReminderBusy] = useState(false);
   const route = useRoute();
   const navigation = useNavigation();
+
+  const stopPress = (e) => {
+    if (e?.stopPropagation) e.stopPropagation();
+  };
+
+  const setReminderEnabled = async (nextEnabled) => {
+    if (!counter) return;
+
+    if (reminderBusy) return;
+    setReminderBusy(true);
+
+    try {
+      const next = { ...counter, reminderEnabled: Boolean(nextEnabled) };
+      const nextAll = allCounters.map((c) => (c.id === next.id ? next : c));
+
+      setAllCounters(nextAll);
+      setCounter(next);
+      // Wait to save until after scheduling succeeds or fails.
+      await saveCounters(nextAll);
+
+      if (next.reminderEnabled) {
+        const result = await enableHabitReminder(next.id, {
+          title: next.title,
+          hour: next.reminderHour ?? 20,
+          minute: next.reminderMinute ?? 0,
+        });
+
+        if (!result || !result.ok) {
+          const title = "Reminders unavailable";
+          const msg =
+            result?.reason === "web"
+              ? "Reminders don’t work on the web preview. Try opening this app on a phone using Expo Go."
+              : result?.reason === "schedule"
+                ? "Couldn’t schedule this reminder. Check notification settings and try again."
+                : "Please allow notifications to enable reminders.";
+
+          if (Platform.OS === "web") {
+            globalThis.alert(`${title}\n\n${msg}`);
+          } else {
+            Alert.alert(title, msg);
+          }
+
+          const rolledBack = { ...next, reminderEnabled: false };
+          const rolledBackAll = allCounters.map((c) =>
+            c.id === rolledBack.id ? rolledBack : c,
+          );
+          setAllCounters(rolledBackAll);
+          setCounter(rolledBack);
+          await saveCounters(rolledBackAll);
+        }
+        return;
+      }
+
+      await disableHabitReminder(next.id);
+    } catch (e) {
+      console.error(e);
+      if (Platform.OS === "web") {
+        globalThis.alert("Could not change reminder state. " + String(e));
+      } else {
+        Alert.alert("Error", "Could not change reminder state. " + String(e));
+      }
+      // Rollback to original counter state
+      const rolledBackAll = allCounters.map((c) =>
+        c.id === counter.id ? counter : c,
+      );
+      setAllCounters(rolledBackAll);
+      setCounter(counter);
+      await saveCounters(rolledBackAll);
+    } finally {
+      setReminderBusy(false);
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -91,11 +168,51 @@ export default function DetailScreen() {
 
   useEffect(() => {
     if (!counter) return;
-    const hh = String(counter.reminderHour ?? 20);
-    const mm = String(counter.reminderMinute ?? 0).padStart(2, "0");
+    const hh = Number(counter.reminderHour ?? 20);
+    const mm = Number(counter.reminderMinute ?? 0);
     setReminderHourDraft(hh);
     setReminderMinuteDraft(mm);
   }, [counter?.id]);
+
+  useEffect(() => {
+    if (!counter) return;
+
+    flameAnim.stopAnimation();
+    flameAnim.setValue(0);
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(flameAnim, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flameAnim, {
+          toValue: 0,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
+  }, [counter?.id]);
+
+  useEffect(() => {
+    if (!counter) return;
+    comboScale.stopAnimation();
+    comboScale.setValue(1);
+    Animated.sequence([
+      Animated.timing(comboScale, {
+        toValue: 1.08,
+        duration: 120,
+        useNativeDriver: true,
+      }),
+      Animated.spring(comboScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 160,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [counter?.streak]);
 
   const refresh = async () => {
     try {
@@ -145,8 +262,18 @@ export default function DetailScreen() {
     setCounter(updated);
     await saveCounters(nextAll);
 
+    // Subtle haptic-ish feedback without extra dependencies.
+    Vibration.vibrate(12);
+
     const delta = (updated.streak || 0) - (before.streak || 0);
     const status = getStreakStatus(updated);
+
+    const milestones = [7, 30, 100];
+    const hitMilestone = milestones.includes(updated.streak || 0);
+    if (hitMilestone) {
+      Vibration.vibrate([0, 18, 60, 18]);
+    }
+
     showToast({
       title:
         delta <= 0
@@ -154,7 +281,9 @@ export default function DetailScreen() {
           : updated.streak === 1 && (before.streak || 0) === 0
             ? "🔥 Streak started"
             : "🔥 Streak +1",
-      subtitle: `${status.streak}-day streak`,
+      subtitle: hitMilestone
+        ? `🏅 Milestone! ${status.streak}-day combo`
+        : `${status.streak}-day combo`,
     });
   };
 
@@ -225,6 +354,14 @@ export default function DetailScreen() {
     }));
   }, [counter]);
 
+  const nextMilestone = useMemo(() => {
+    if (!counter) return null;
+    const milestones = [7, 30, 100];
+    const current = counter.streak || 0;
+    const next = milestones.find((n) => n > current) ?? null;
+    return next;
+  }, [counter]);
+
   if (!counter) {
     return <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-950" />;
   }
@@ -239,6 +376,10 @@ export default function DetailScreen() {
     ? Math.min(1, (counter.streak || 0) / counter.goal)
     : 0;
 
+  const milestonePct = nextMilestone
+    ? Math.min(1, (counter.streak || 0) / nextMilestone)
+    : 1;
+
   return (
     <SafeAreaView className="flex-1 bg-slate-50 dark:bg-slate-950">
       <Modal visible={reminderTimeOpen} transparent animationType="slide">
@@ -248,7 +389,7 @@ export default function DetailScreen() {
         >
           <Pressable
             className="mt-auto rounded-3xl bg-white p-5 dark:bg-slate-900"
-            onPress={() => {}}
+            onPress={stopPress}
           >
             <View className="flex-row items-center justify-between">
               <Text className="text-lg font-bold text-slate-900 dark:text-slate-100">
@@ -264,27 +405,44 @@ export default function DetailScreen() {
               </Pressable>
             </View>
 
-            <Text className="mt-4 text-xs font-medium text-slate-500 dark:text-slate-400">
-              Time (24h)
-            </Text>
+            <View className="mt-4 items-center">
+              <Text className="text-4xl font-black text-slate-900 dark:text-slate-100">
+                {String(reminderHourDraft || 0).padStart(2, "0")}:
+                {String(reminderMinuteDraft || 0).padStart(2, "0")}
+              </Text>
+            </View>
 
-            <View className="mt-2 flex-row items-center">
-              <TextInput
-                value={reminderHourDraft}
-                onChangeText={setReminderHourDraft}
-                placeholder="20"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
-                className="w-20 rounded-2xl bg-slate-100 px-4 py-3 text-center text-slate-900 dark:bg-slate-800 dark:text-slate-100"
+            <View className="mt-6">
+              <Text className="mb-0.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Hour
+              </Text>
+              <Slider
+                style={{ width: "100%", height: 40 }}
+                minimumValue={0}
+                maximumValue={23}
+                step={1}
+                value={Number(reminderHourDraft) || 0}
+                onValueChange={(v) => setReminderHourDraft(v)}
+                minimumTrackTintColor="#f97316"
+                maximumTrackTintColor="#e2e8f0"
+                thumbTintColor="#f97316"
               />
-              <Text className="mx-2 text-lg font-bold text-slate-500">:</Text>
-              <TextInput
-                value={reminderMinuteDraft}
-                onChangeText={setReminderMinuteDraft}
-                placeholder="00"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
-                className="w-20 rounded-2xl bg-slate-100 px-4 py-3 text-center text-slate-900 dark:bg-slate-800 dark:text-slate-100"
+            </View>
+
+            <View className="mt-4">
+              <Text className="mb-0.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Minute
+              </Text>
+              <Slider
+                style={{ width: "100%", height: 40 }}
+                minimumValue={0}
+                maximumValue={59}
+                step={1}
+                value={Number(reminderMinuteDraft) || 0}
+                onValueChange={(v) => setReminderMinuteDraft(v)}
+                minimumTrackTintColor="#f97316"
+                maximumTrackTintColor="#e2e8f0"
+                thumbTintColor="#f97316"
               />
             </View>
 
@@ -322,8 +480,8 @@ export default function DetailScreen() {
                 setReminderTimeOpen(false);
 
                 if (next.reminderEnabled) {
-                  const result = await enableHabitReminder(counter.id, {
-                    title: counter.title,
+                  const result = await enableHabitReminder(next.id, {
+                    title: next.title,
                     hour: next.reminderHour,
                     minute: next.reminderMinute,
                   });
@@ -443,11 +601,27 @@ export default function DetailScreen() {
 
         <View className="mt-5 flex-row justify-between rounded-3xl bg-white/90 p-4 dark:bg-slate-900">
           <View className="items-center">
-            <Text className="text-xl font-bold text-orange-500">
-              🔥 {counter.streak}
-            </Text>
+            <Animated.View
+              style={{
+                transform: [
+                  {
+                    scale: Animated.multiply(
+                      comboScale,
+                      flameAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, 1.04],
+                      }),
+                    ),
+                  },
+                ],
+              }}
+            >
+              <Text className="text-xl font-bold text-orange-500">
+                🔥 {counter.streak}
+              </Text>
+            </Animated.View>
             <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              current
+              combo
             </Text>
           </View>
           <View className="items-center">
@@ -455,7 +629,7 @@ export default function DetailScreen() {
               🏆 {counter.longestStreak}
             </Text>
             <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              best
+              best combo
             </Text>
           </View>
           <View className="items-center">
@@ -465,6 +639,46 @@ export default function DetailScreen() {
             <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               total
             </Text>
+          </View>
+        </View>
+
+        <View className="mt-4 rounded-3xl bg-white/90 p-4 dark:bg-slate-900">
+          <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+            Rewards
+          </Text>
+
+          <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {nextMilestone
+              ? `Next badge at ${nextMilestone} days (keep the streak going)`
+              : "All badges earned — keep the flame alive"}
+          </Text>
+
+          <View className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+            <View
+              className="h-2 rounded-full bg-orange-500"
+              style={{ width: `${Math.round(milestonePct * 100)}%` }}
+            />
+          </View>
+
+          <View className="mt-4 flex-row justify-between">
+            {badges.map((b) => (
+              <View
+                key={b.n}
+                className={`flex-1 rounded-2xl px-3 py-3 ${
+                  b.earned
+                    ? "bg-slate-100 dark:bg-slate-800"
+                    : "bg-white/70 dark:bg-slate-900"
+                }`}
+                style={{ marginRight: b.n === 100 ? 0 : 10 }}
+              >
+                <Text className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  {b.earned ? "🏅" : "🔒"} {b.n} days
+                </Text>
+                <Text className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  {b.earned ? "Earned" : "Not yet"}
+                </Text>
+              </View>
+            ))}
           </View>
         </View>
 
@@ -490,109 +704,74 @@ export default function DetailScreen() {
         <Pressable
           onPress={markComplete}
           disabled={done}
-          className={`mt-4 items-center justify-center rounded-2xl px-4 py-4 ${
+          className={`mt-4 flex-row items-center rounded-3xl px-4 py-4 ${
             done
               ? "bg-slate-100 dark:bg-slate-900"
-              : "bg-slate-900 dark:bg-slate-100"
+              : "bg-white/90 dark:bg-slate-900"
           }`}
         >
-          <Text
-            className={`text-base font-semibold ${
+          <View
+            className={`h-12 w-12 items-center justify-center rounded-2xl ${
               done
-                ? "text-slate-500 dark:text-slate-400"
-                : "text-white dark:text-slate-900"
+                ? "bg-slate-200 dark:bg-slate-800"
+                : "bg-slate-900 dark:bg-slate-100"
             }`}
           >
-            {done ? "Done for today ✓" : "Mark today complete"}
-          </Text>
-          {!done ? (
-            <Text className="mt-1 text-xs text-slate-300 dark:text-slate-600">
-              {status?.variant === "risk"
-                ? "Don’t lose it today"
-                : "Keep it going"}
+            <Text
+              className={`text-lg font-bold ${
+                done
+                  ? "text-slate-600 dark:text-slate-300"
+                  : "text-white dark:text-slate-900"
+              }`}
+            >
+              {done ? "✓" : "○"}
             </Text>
-          ) : null}
+          </View>
+          <View className="flex-1 pl-4">
+            <Text
+              className={`text-base font-semibold ${
+                done
+                  ? "text-slate-500 dark:text-slate-400"
+                  : "text-slate-900 dark:text-slate-100"
+              }`}
+            >
+              {done ? "Done for today" : "Complete today"}
+            </Text>
+            <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              {done
+                ? "Come back tomorrow"
+                : status?.variant === "risk"
+                  ? "Don’t lose it today"
+                  : "Keep it going"}
+            </Text>
+          </View>
         </Pressable>
 
         <View className="mt-5 rounded-3xl bg-white/90 p-4 dark:bg-slate-900">
-          <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            Reminder
-          </Text>
-          <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            Daily at {formatTime(counter.reminderHour, counter.reminderMinute)}
-          </Text>
+          <View className="flex-row items-center justify-between">
+            <View>
+              <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Reminder
+              </Text>
+              <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Daily at{" "}
+                {formatTime(counter.reminderHour, counter.reminderMinute)}
+              </Text>
+            </View>
+            <Switch
+              value={Boolean(counter.reminderEnabled)}
+              onValueChange={(v) => setReminderEnabled(v)}
+              disabled={reminderBusy}
+            />
+          </View>
 
           <Pressable
             onPress={() => setReminderTimeOpen(true)}
-            className="mt-3 rounded-2xl bg-slate-100 px-4 py-3 dark:bg-slate-800"
+            className="mt-4 rounded-2xl bg-slate-100 px-4 py-3 dark:bg-slate-800"
           >
             <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
               Change time
             </Text>
-          </Pressable>
-
-          <Pressable
-            onPress={async () => {
-              if (!counter) return;
-
-              const nextEnabled = !counter.reminderEnabled;
-              const next = { ...counter, reminderEnabled: nextEnabled };
-              const nextAll = allCounters.map((c) =>
-                c.id === next.id ? next : c,
-              );
-
-              setAllCounters(nextAll);
-              setCounter(next);
-              await saveCounters(nextAll);
-
-              if (nextEnabled) {
-                const result = await enableHabitReminder(counter.id, {
-                  title: counter.title,
-                  hour: counter.reminderHour ?? 20,
-                  minute: counter.reminderMinute ?? 0,
-                });
-                if (!result.ok) {
-                  Alert.alert(
-                    "Reminders unavailable",
-                    result.reason === "web"
-                      ? "Reminders don’t work on web. Try on a device via Expo Go."
-                      : "Please allow notifications to enable reminders.",
-                  );
-
-                  const rolledBack = { ...next, reminderEnabled: false };
-                  const rolledBackAll = allCounters.map((c) =>
-                    c.id === rolledBack.id ? rolledBack : c,
-                  );
-                  setAllCounters(rolledBackAll);
-                  setCounter(rolledBack);
-                  await saveCounters(rolledBackAll);
-                  return;
-                }
-                return;
-              }
-
-              await disableHabitReminder(counter.id);
-            }}
-            className="mt-3 flex-row items-center justify-between rounded-2xl bg-slate-100 px-4 py-4 dark:bg-slate-800"
-          >
-            <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Enabled
-            </Text>
-            <View
-              className={`h-6 w-12 rounded-full p-1 ${
-                counter.reminderEnabled
-                  ? "bg-slate-900 dark:bg-slate-100"
-                  : "bg-slate-200 dark:bg-slate-700"
-              }`}
-            >
-              <View
-                className={`h-4 w-4 rounded-full ${
-                  counter.reminderEnabled
-                    ? "ml-auto bg-white dark:bg-slate-900"
-                    : "bg-white dark:bg-slate-500"
-                }`}
-              />
-            </View>
           </Pressable>
         </View>
 

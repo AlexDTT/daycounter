@@ -95,7 +95,7 @@ export default function SettingsScreen() {
 
         <View className="mt-5">
           <Row
-            title="Dark mode"
+            title="🌓 Dark mode"
             subtitle={
               hasAdaptiveThemes
                 ? "Following system (long-press to override)"
@@ -107,7 +107,7 @@ export default function SettingsScreen() {
           />
           <View className="h-3" />
           <Row
-            title="Habit reminders"
+            title="🔔 Habit reminders"
             subtitle="Enable per habit in the habit details"
             value={null}
             onPress={() =>
@@ -129,7 +129,7 @@ export default function SettingsScreen() {
           className="mt-6 items-center justify-center rounded-2xl bg-white/90 px-4 py-4 dark:bg-slate-900"
         >
           <Text className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-            How to use
+            ℹ️ How to use
           </Text>
           <Text className="mt-1 text-xs text-slate-500 dark:text-slate-400">
             Long-press counters for actions
